@@ -8,24 +8,35 @@
         </div>
 
         <div class="app-content">
-            <!-- Add Album Section -->
-            <div class="section">
-                <h3>Add New Album</h3>
-                <div class="add-album-form">
+            <!-- Authentication Section -->
+            <div class="section" v-if="!authenticated">
+                <h3>🔐 Login with Apple ID</h3>
+                <p class="hint">Login with your Apple ID to automatically discover all shared albums</p>
+                <div class="login-form">
                     <input
-                        v-model="newAlbumToken"
-                        type="text"
-                        placeholder="Enter iCloud album token or URL"
-                        @keyup.enter="discoverAlbum"
+                        v-model="appleId"
+                        type="email"
+                        placeholder="Apple ID (email@icloud.com)"
                     />
-                    <button @click="discoverAlbum" :disabled="!newAlbumToken || discovering">
-                        {{ discovering ? 'Discovering...' : 'Add Album' }}
+                    <input
+                        v-model="password"
+                        type="password"
+                        placeholder="Apple ID Password"
+                        @keyup.enter="login"
+                    />
+                    <button @click="login" :disabled="!appleId || !password || loggingIn" class="primary">
+                        {{ loggingIn ? 'Authenticating...' : 'Login' }}
                     </button>
                 </div>
-                <p class="hint">
-                    Enter the iCloud shared album URL (e.g., https://share.icloud.com/photos/abc123)
-                    or just the token (abc123)
-                </p>
+            </div>
+
+            <!-- Discovery Section -->
+            <div class="section" v-if="authenticated">
+                <h3>✅ Authenticated</h3>
+                <p class="hint">Discover all albums shared with your Apple ID automatically!</p>
+                <button @click="discoverAllAlbums" :disabled="discovering" class="primary">
+                    {{ discovering ? 'Discovering...' : '🔍 Discover All Albums' }}
+                </button>
             </div>
 
             <!-- Albums List -->
@@ -145,7 +156,10 @@ export default {
             loading: false,
             syncing: false,
             discovering: false,
-            newAlbumToken: '',
+            authenticated: false,
+            appleId: '',
+            password: '',
+            loggingIn: false,
             filter: 'all',
         }
     },
@@ -158,6 +172,7 @@ export default {
         },
     },
     mounted() {
+        this.checkAuthStatus()
         this.loadAlbums()
     },
     methods: {
@@ -174,20 +189,51 @@ export default {
                 this.loading = false
             }
         },
-        async discoverAlbum() {
+        async checkAuthStatus() {
+            try {
+                const response = await axios.get(generateUrl('/apps/icloud_albums/api/auth/status'))
+                if (response.data.success) {
+                    this.authenticated = response.data.data.authenticated
+                }
+            } catch (error) {
+                console.error('Failed to check auth status:', error)
+                this.authenticated = false
+            }
+        },
+        async login() {
+            this.loggingIn = true
+            try {
+                const response = await axios.post(
+                    generateUrl('/apps/icloud_albums/api/auth/login'),
+                    {
+                        apple_id: this.appleId,
+                        password: this.password
+                    }
+                )
+                if (response.data.success) {
+                    showSuccess('Successfully authenticated with Apple ID!')
+                    this.authenticated = true
+                    this.password = '' // Clear password from memory
+                }
+            } catch (error) {
+                showError('Failed to authenticate: ' + error.message)
+                this.authenticated = false
+            } finally {
+                this.loggingIn = false
+            }
+        },
+        async discoverAllAlbums() {
             this.discovering = true
             try {
                 const response = await axios.post(
-                    generateUrl('/apps/icloud_albums/api/albums/discover'),
-                    { token: this.newAlbumToken }
+                    generateUrl('/apps/icloud_albums/api/albums/discover-all')
                 )
                 if (response.data.success) {
-                    showSuccess('Album discovered successfully!')
-                    this.newAlbumToken = ''
+                    showSuccess('Albums discovered successfully!')
                     await this.loadAlbums()
                 }
             } catch (error) {
-                showError('Failed to discover album: ' + error.message)
+                showError('Failed to discover albums: ' + error.message)
             } finally {
                 this.discovering = false
             }
@@ -301,15 +347,21 @@ export default {
     margin-top: 0;
 }
 
-.add-album-form {
+.login-form {
     display: flex;
+    flex-direction: column;
     gap: 10px;
-    margin-bottom: 10px;
+    max-width: 400px;
 }
 
-.add-album-form input {
-    flex: 1;
-    padding: 8px;
+.login-form input {
+    padding: 10px;
+    border: 1px solid var(--color-border);
+    border-radius: 4px;
+}
+
+.login-form button {
+    padding: 10px;
 }
 
 .hint {

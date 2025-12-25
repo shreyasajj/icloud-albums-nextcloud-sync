@@ -49,6 +49,35 @@ class ApiController extends Controller {
     /**
      * @NoAdminRequired
      */
+    public function login(): JSONResponse {
+        try {
+            $appleId = $this->request->getParam('apple_id');
+            $password = $this->request->getParam('password');
+            $response = $this->syncService->post('/api/auth/login', [
+                'apple_id' => $appleId,
+                'password' => $password
+            ]);
+            return new JSONResponse($response);
+        } catch (\Exception $e) {
+            return new JSONResponse(['error' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * @NoAdminRequired
+     */
+    public function authStatus(): JSONResponse {
+        try {
+            $response = $this->syncService->get('/api/auth/status');
+            return new JSONResponse($response);
+        } catch (\Exception $e) {
+            return new JSONResponse(['error' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * @NoAdminRequired
+     */
     public function listAlbums(): JSONResponse {
         try {
             $response = $this->syncService->get('/api/albums');
@@ -73,10 +102,9 @@ class ApiController extends Controller {
     /**
      * @NoAdminRequired
      */
-    public function discoverAlbum(): JSONResponse {
+    public function discoverAllAlbums(): JSONResponse {
         try {
-            $token = $this->request->getParam('token');
-            $response = $this->syncService->post('/api/albums/discover', ['token' => $token]);
+            $response = $this->syncService->post('/api/albums/discover-all');
             return new JSONResponse($response);
         } catch (\Exception $e) {
             return new JSONResponse(['error' => $e->getMessage()], 500);
