@@ -4,14 +4,28 @@ Automatically sync iCloud Shared Albums to your Nextcloud instance with bi-direc
 
 ## Features
 
-- 📸 **Automatic Sync**: Sync iCloud Shared Albums to Nextcloud automatically
+- 🔑 **Apple ID Authentication**: Login once with your Apple ID to automatically discover all shared albums
+- 📸 **Automatic Discovery**: No manual share links needed - discovers ALL albums automatically
 - ✅ **Approve/Reject**: Review and approve new album shares before syncing
 - 🔔 **Home Assistant Integration**: Get notified about new album shares
 - 🔄 **Bi-directional Management**: Files removed from iCloud are removed from Nextcloud
-- 🔐 **SHA256 Deduplication**: Avoid duplicate files using cryptographic hashing
-- ⚡ **Concurrent Downloads**: Fast syncing with configurable parallel downloads
+- 🔐 **SHA256 Deduplication & Encryption**: Secure credential storage with AES-256-GCM
+- ⚡ **Concurrent Downloads**: Fast syncing with configurable parallel downloads via MMCS protocol
 - 🎨 **Beautiful UI**: Vue.js-based Nextcloud app with modern interface
 - 🐳 **Docker Ready**: Easy deployment with Docker Compose
+
+## How It Works
+
+This project uses **rustpush** for native iCloud authentication and album discovery:
+
+1. **Authentication**: Login with your Apple ID using Apple's GSA (Grandslam) authentication
+2. **Anisette Generation**: Uses omnisette library to generate time-based Apple authentication data
+3. **SharedStreams API**: Connects to iCloud SharedStreams service to discover all albums automatically
+4. **MMCS Protocol**: Downloads photos using Apple's Mobile Me Content Server protocol
+5. **Secure Storage**: Credentials encrypted with AES-256-GCM before database storage
+6. **Auto-Refresh**: Authentication tokens automatically refresh (weekly) for persistent access
+
+**No more manual share links needed!** Just login once with your Apple ID and discover all albums.
 
 ## Architecture
 
@@ -19,7 +33,7 @@ This project consists of three main components:
 
 1. **Sync Service** (Rust): Backend service handling iCloud API, Nextcloud WebDAV, and sync logic
 2. **Nextcloud App** (PHP + Vue.js): User interface integrated into Nextcloud
-3. **PostgreSQL Database**: Stores album metadata, file tracking, and sync history
+3. **PostgreSQL Database**: Stores album metadata, file tracking, sync history, and encrypted credentials
 
 See [ARCHITECTURE.md](./ARCHITECTURE.md) for detailed architecture documentation.
 
@@ -27,7 +41,8 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for detailed architecture documentation
 
 - **Nextcloud**: Version 28+ (Nextcloud AIO recommended)
 - **Docker & Docker Compose**: For running the sync service
-- **iCloud Shared Album Token**: Get this from the iCloud shared album URL
+- **Apple ID**: Your iCloud account credentials for automatic album discovery
+- **Anisette Server** (optional): Uses public server by default, or self-host for privacy
 
 ## Quick Start
 
@@ -54,6 +69,12 @@ Set the following variables:
 POSTGRES_DB=icloud_sync
 POSTGRES_USER=icloud_sync
 POSTGRES_PASSWORD=your_secure_password
+
+# Security - IMPORTANT: Change this to a random 32+ character string
+ENCRYPTION_SECRET=CHANGE_ME_TO_RANDOM_STRING_IN_PRODUCTION
+
+# iCloud Authentication (rustpush)
+ANISETTE_URL=https://ani.sidestore.io/v3  # Public anisette server (or self-host)
 
 # Nextcloud Configuration
 NEXTCLOUD_URL=https://your-nextcloud.example.com
@@ -114,28 +135,33 @@ Mount the app directory as a volume in your Nextcloud AIO container.
 2. Set the Sync Service URL: `http://sync-service:8080` (if using Docker) or `http://localhost:8080`
 3. Click **Save**
 
-### 6. Add Your First Album
+### 6. Login and Discover Albums
 
 1. Go to **iCloud Albums Sync** in the Nextcloud app menu
-2. Paste your iCloud shared album URL or token
-3. Click **Add Album**
-4. Approve the album
-5. Wait for the sync to complete
+2. Enter your Apple ID and password
+3. Click **Login** (your credentials are encrypted with AES-256-GCM)
+4. Click **Discover All Albums** to automatically find all shared albums
+5. Approve the albums you want to sync
+6. Wait for the sync to complete
 
 ## Usage
 
-### Adding Albums
+### Discovering Albums
 
-1. Get your iCloud shared album URL:
-   - Open Photos app on iOS/macOS
-   - Go to Shared Albums
-   - Tap/click on the album
-   - Click Share icon
-   - Copy the URL (e.g., `https://share.icloud.com/photos/abc123def456`)
+1. **Login with Apple ID** (one-time setup):
+   - Enter your Apple ID email and password in the Nextcloud app
+   - Click **Login**
+   - Your credentials are encrypted and stored securely
 
-2. In the Nextcloud app, paste the URL or just the token (`abc123def456`)
+2. **Discover All Albums**:
+   - Click **Discover All Albums** button
+   - The system automatically discovers ALL albums shared with your Apple ID
+   - No need to manually copy share links or tokens
 
-3. The album will appear as "Pending" - you need to approve it
+3. **Approve Albums**:
+   - New albums appear as "Pending" status
+   - Review each album and click "Approve" to start syncing
+   - Click "Reject" to decline unwanted albums
 
 ### Approving Albums
 
@@ -203,6 +229,11 @@ The sync service exposes a REST API on port 8080.
 
 ### Endpoints
 
+#### Authentication
+
+- `POST /api/auth/login` - Login with Apple ID credentials
+- `GET /api/auth/status` - Check authentication status
+
 #### Config
 
 - `GET /api/config` - Get configuration
@@ -212,7 +243,7 @@ The sync service exposes a REST API on port 8080.
 
 - `GET /api/albums` - List all albums
 - `GET /api/albums/:id` - Get album details
-- `POST /api/albums/discover` - Discover new album
+- `POST /api/albums/discover-all` - Discover all albums (requires authentication)
 - `POST /api/albums/:id/approve` - Approve album
 - `POST /api/albums/:id/reject` - Reject album
 - `PUT /api/albums/:id/sync-toggle` - Toggle sync
@@ -222,14 +253,21 @@ The sync service exposes a REST API on port 8080.
 
 - `POST /api/sync/all` - Sync all albums
 - `GET /api/sync/history` - Get sync history
+- `GET /api/sync/history/:id` - Get album-specific sync history
 
 ### Example API Calls
 
 ```bash
-# Discover an album
-curl -X POST http://localhost:8080/api/albums/discover \
+# Login with Apple ID
+curl -X POST http://localhost:8080/api/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"token": "abc123def456"}'
+  -d '{"apple_id": "your@email.com", "password": "your-password"}'
+
+# Check authentication status
+curl http://localhost:8080/api/auth/status
+
+# Discover all albums (requires authentication)
+curl -X POST http://localhost:8080/api/albums/discover-all
 
 # Approve an album
 curl -X POST http://localhost:8080/api/albums/1/approve
@@ -240,18 +278,27 @@ curl -X POST http://localhost:8080/api/sync/all
 
 ## Troubleshooting
 
+### Authentication Issues
+
+1. **Login Failed**: Check Apple ID credentials are correct
+2. **Two-Factor Authentication**: Currently not supported - disable 2FA or use app-specific password
+3. **Anisette Server Down**: Try self-hosting anisette or wait for public server to recover
+4. **Credentials Not Persisting**: Check ENCRYPTION_SECRET is set and database is writable
+
 ### Sync Service Not Starting
 
 1. Check logs: `docker-compose logs sync-service`
 2. Verify database connection
 3. Ensure DATABASE_URL is correct
+4. Verify ENCRYPTION_SECRET is set (required for credential storage)
 
 ### Album Not Syncing
 
-1. Check album status (must be "Approved")
-2. Verify sync is enabled for the album
-3. Check sync service logs for errors
-4. Verify Nextcloud credentials are correct
+1. Ensure you're authenticated (check auth status endpoint)
+2. Check album status (must be "Approved")
+3. Verify sync is enabled for the album
+4. Check sync service logs for errors
+5. Verify Nextcloud credentials are correct
 
 ### Nextcloud App Not Connecting
 
@@ -261,9 +308,10 @@ curl -X POST http://localhost:8080/api/sync/all
 
 ### Photos Not Downloading
 
-1. Check that the iCloud token is still valid
+1. Check that authentication is still valid (may need to re-login)
 2. Verify internet connectivity
 3. Check sync service logs for download errors
+4. Verify anisette server is accessible
 
 ## Development
 
@@ -319,8 +367,9 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## Acknowledgments
 
-- [rustpush](https://github.com/OpenBubbles/rustpush) - Inspiration for iCloud integration
-- [icloud-album-rs](https://github.com/harperreed/icloud-album-parser) - iCloud album parsing library
+- [rustpush](https://github.com/OpenBubbles/rustpush) - iCloud SharedStreams client library
+- [omnisette](https://github.com/SideStore/apple-private-apis) - Apple anisette data generation
+- [icloud-auth](https://github.com/SideStore/apple-private-apis) - Apple GSA authentication
 - [OpenBubbles](https://github.com/OpenBubbles/openbubbles-app) - Reference implementation
 
 ## Support
@@ -328,10 +377,15 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - **Issues**: [GitHub Issues](https://github.com/yourusername/icloud-albums-nextcloud-sync/issues)
 - **Discussions**: [GitHub Discussions](https://github.com/yourusername/icloud-albums-nextcloud-sync/discussions)
 
+## Security & Privacy
+
+- **Credential Encryption**: Apple ID passwords are encrypted with AES-256-GCM before storage
+- **Anisette Server**: Default public server works but sends device data to third party. Consider self-hosting for maximum privacy
+- **Token Storage**: MobileMe tokens are stored encrypted and auto-refresh weekly
+- **HTTPS Recommended**: Use HTTPS for Nextcloud URLs to protect data in transit
+
 ## Disclaimer
 
-This project uses unofficial iCloud APIs. Use at your own risk. Apple may change these APIs at any time.
+This project uses unofficial iCloud APIs via the rustpush library. Use at your own risk. Apple may change these APIs at any time. This project is not affiliated with or endorsed by Apple Inc.
 
----
-
-**Note**: While this project was designed with rustpush integration in mind, the current implementation uses the well-documented `icloud-album-rs` library for token-based access to shared albums. Full iCloud authentication via rustpush can be integrated in future versions.
+**Important**: This tool requires your Apple ID credentials. Credentials are encrypted and stored locally in your database. Consider using an app-specific password if you have two-factor authentication enabled.
