@@ -74,4 +74,6 @@ INSERT INTO config (key, value) VALUES
     ('nextcloud_username', ''),
     ('nextcloud_password', ''),
     ('target_folder', '/iCloud Albums'),
-    ('icloud_token', '');
+    ('apple_id', ''),
+    ('anisette_url', 'https://ani.sidestore.io/v3'),
+    ('device_configured', 'false');

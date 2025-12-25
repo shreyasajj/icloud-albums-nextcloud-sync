@@ -1,91 +1,243 @@
-use super::{Album, Photo, parse_album_token};
+use super::auth::AuthManager;
 use anyhow::{Context, Result};
-use icloud_album_rs::get_icloud_photos;
-use tracing::{debug, info, instrument};
+use rustpush::sharedstreams::{
+    Album as RustPushAlbum, Asset, SharedStreamClient, SharedStreamsChange,
+};
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use tracing::{debug, info, instrument, warn};
 
-/// Client for interacting with iCloud Shared Albums
-#[derive(Debug, Clone)]
+/// Album from iCloud SharedStreams
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Album {
+    pub guid: String,
+    pub name: String,
+    pub owner_email: Option<String>,
+    pub owner_name: Option<String>,
+    pub asset_count: usize,
+}
+
+/// Photo/Asset from iCloud SharedStreams
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Photo {
+    pub guid: String,
+    pub filename: String,
+    pub checksum: String,
+    pub file_size: u64,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub mime_type: Option<String>,
+}
+
+impl From<&RustPushAlbum> for Album {
+    fn from(album: &RustPushAlbum) -> Self {
+        Self {
+            guid: album.guid.clone(),
+            name: album.name.clone().unwrap_or_else(|| "Untitled Album".to_string()),
+            owner_email: album.owner_email.clone(),
+            owner_name: album.owner_full_name.clone(),
+            asset_count: 0, // Will be updated when fetching assets
+        }
+    }
+}
+
+impl From<&Asset> for Photo {
+    fn from(asset: &Asset) -> Self {
+        // Extract filename from derivative URL or use GUID
+        let filename = asset
+            .derivative_url
+            .as_ref()
+            .and_then(|url| url.split('/').last())
+            .unwrap_or(&asset.guid)
+            .to_string();
+
+        Self {
+            guid: asset.guid.clone(),
+            filename,
+            checksum: asset.checksum.clone().unwrap_or_default(),
+            file_size: asset.file_size.unwrap_or(0),
+            width: asset.width,
+            height: asset.height,
+            mime_type: asset.mime_type.clone(),
+        }
+    }
+}
+
+/// Client for interacting with iCloud Shared Albums via rustpush
 pub struct ICloudClient {
-    // In future, this will include authentication credentials for full iCloud API access
-    // For now, we use token-based access via icloud-album-rs
+    auth_manager: Arc<AuthManager>,
+    client: Option<SharedStreamClient>,
 }
 
 impl ICloudClient {
     /// Create a new iCloud client
-    pub fn new() -> Self {
-        Self {}
+    pub fn new(auth_manager: Arc<AuthManager>) -> Self {
+        Self {
+            auth_manager,
+            client: None,
+        }
     }
 
-    /// Fetch an album and its photos using a shared album token
+    /// Initialize the SharedStreamClient (requires authentication)
     #[instrument(skip(self))]
-    pub async fn fetch_album(&self, token: &str) -> Result<Album> {
-        let clean_token = parse_album_token(token);
-        info!("Fetching iCloud album with token: {}", clean_token);
+    pub async fn initialize(&mut self) -> Result<()> {
+        info!("Initializing iCloud SharedStream client");
 
-        let response = get_icloud_photos(&clean_token)
-            .await
-            .context("Failed to fetch iCloud album")?;
+        if !self.auth_manager.is_authenticated().await {
+            info!("Not authenticated, attempting to load credentials");
+            let success = self.auth_manager.load_and_authenticate().await?;
 
-        debug!(
-            "Fetched album '{}' with {} photos",
-            response.metadata.stream_name,
-            response.photos.len()
-        );
-
-        let photos = response
-            .photos
-            .iter()
-            .filter_map(|img| match Photo::from_icloud_image(img) {
-                Ok(photo) => Some(photo),
-                Err(e) => {
-                    tracing::warn!(
-                        "Failed to convert image {}: {}",
-                        img.photo_guid,
-                        e
-                    );
-                    None
-                }
-            })
-            .collect();
-
-        Ok(Album {
-            token: clean_token,
-            name: response.metadata.stream_name.clone(),
-            owner: Some(format!(
-                "{} {}",
-                response.metadata.user_first_name.unwrap_or_default(),
-                response.metadata.user_last_name.unwrap_or_default()
-            )),
-            photos,
-        })
-    }
-
-    /// Download a photo from iCloud
-    #[instrument(skip(self))]
-    pub async fn download_photo(&self, url: &str) -> Result<bytes::Bytes> {
-        debug!("Downloading photo from: {}", url);
-
-        let response = reqwest::get(url)
-            .await
-            .context("Failed to download photo")?;
-
-        if !response.status().is_success() {
-            anyhow::bail!("Failed to download photo: HTTP {}", response.status());
+            if !success {
+                anyhow::bail!("Not authenticated. Please login with Apple ID first.");
+            }
         }
 
-        let bytes = response
-            .bytes()
-            .await
-            .context("Failed to read photo bytes")?;
+        let token_provider = self.auth_manager.get_token_provider().await?;
 
-        debug!("Downloaded {} bytes", bytes.len());
+        // Create SharedStreamClient
+        self.client = Some(SharedStreamClient::new(token_provider));
 
-        Ok(bytes)
+        info!("SharedStream client initialized successfully");
+
+        Ok(())
     }
-}
 
-impl Default for ICloudClient {
-    fn default() -> Self {
-        Self::new()
+    /// Ensure client is initialized
+    fn get_client(&self) -> Result<&SharedStreamClient> {
+        self.client
+            .as_ref()
+            .context("Client not initialized. Call initialize() first.")
+    }
+
+    /// Discover all shared albums (automatic discovery!)
+    #[instrument(skip(self))]
+    pub async fn discover_all_albums(&self) -> Result<Vec<Album>> {
+        info!("Discovering all shared albums");
+
+        let client = self.get_client()?;
+
+        // Get changes from iCloud (pass None for initial sync)
+        let changes = client
+            .get_changes(None)
+            .await
+            .context("Failed to get album changes from iCloud")?;
+
+        let albums: Vec<Album> = changes
+            .albums
+            .iter()
+            .filter(|a| !a.is_deleted.unwrap_or(false))
+            .map(Album::from)
+            .collect();
+
+        info!("Discovered {} albums", albums.len());
+
+        for album in &albums {
+            debug!("Album: {} ({})", album.name, album.guid);
+        }
+
+        Ok(albums)
+    }
+
+    /// Get album details and photos
+    #[instrument(skip(self))]
+    pub async fn get_album_photos(&self, album_guid: &str) -> Result<Vec<Photo>> {
+        info!("Fetching photos for album: {}", album_guid);
+
+        let client = self.get_client()?;
+
+        // Get album summary (contains asset list)
+        let summary = client
+            .get_album_summary(album_guid)
+            .await
+            .context("Failed to get album summary")?;
+
+        let asset_guids: Vec<String> = summary
+            .assets
+            .iter()
+            .map(|a| a.guid.clone())
+            .collect();
+
+        if asset_guids.is_empty() {
+            info!("Album has no assets");
+            return Ok(vec![]);
+        }
+
+        // Get full asset details
+        let assets = client
+            .get_assets(album_guid, &asset_guids)
+            .await
+            .context("Failed to get asset details")?;
+
+        let photos: Vec<Photo> = assets.iter().map(Photo::from).collect();
+
+        info!("Found {} photos in album", photos.len());
+
+        Ok(photos)
+    }
+
+    /// Download a photo file
+    #[instrument(skip(self))]
+    pub async fn download_photo(&self, album_guid: &str, asset_guid: &str) -> Result<bytes::Bytes> {
+        debug!("Downloading photo: {} from album: {}", asset_guid, album_guid);
+
+        let client = self.get_client()?;
+
+        // Get asset details first to get download URL
+        let assets = client
+            .get_assets(album_guid, &[asset_guid.to_string()])
+            .await
+            .context("Failed to get asset for download")?;
+
+        let asset = assets
+            .first()
+            .context("Asset not found")?;
+
+        // Download using MMCS (Mobile Me Content Server) protocol
+        let file_data = client
+            .get_file(asset)
+            .await
+            .context("Failed to download file")?;
+
+        debug!("Downloaded {} bytes", file_data.len());
+
+        Ok(bytes::Bytes::from(file_data))
+    }
+
+    /// Subscribe to a shared album using invitation token (optional - for manual adds)
+    #[instrument(skip(self))]
+    pub async fn subscribe_to_album(&self, token: &str) -> Result<Album> {
+        info!("Subscribing to album with token: {}", token);
+
+        let client = self.get_client()?;
+
+        let album = client
+            .subscribe_token(token)
+            .await
+            .context("Failed to subscribe to album")?;
+
+        info!("Successfully subscribed to album: {}", album.name.as_deref().unwrap_or("Unknown"));
+
+        Ok(Album::from(&album))
+    }
+
+    /// Poll for album changes (for incremental sync)
+    #[instrument(skip(self))]
+    pub async fn poll_changes(&self, continuation_token: Option<String>) -> Result<SharedStreamsChange> {
+        debug!("Polling for album changes");
+
+        let client = self.get_client()?;
+
+        let changes = client
+            .get_changes(continuation_token.as_deref())
+            .await
+            .context("Failed to poll for changes")?;
+
+        info!(
+            "Got {} album updates, {} deleted",
+            changes.albums.len(),
+            changes.albums.iter().filter(|a| a.is_deleted.unwrap_or(false)).count()
+        );
+
+        Ok(changes)
     }
 }

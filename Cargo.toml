@@ -51,6 +51,13 @@ dotenvy = "0.15"
 # UUID
 uuid = { version = "1.11", features = ["v4", "serde"] }
 
-# iCloud integration
-# Note: rustpush is not available on crates.io, will be added as git dependency
-icloud-album-rs = "0.1"
+# Plist parsing
+plist = "1.6"
+
+# iCloud integration via rustpush
+# rustpush provides SharedStreams API for automatic album discovery
+rustpush = { git = "https://github.com/OpenBubbles/rustpush", features = [] }
+
+# Apple private APIs for authentication
+omnisette = { git = "https://github.com/SideStore/apple-private-apis", package = "omnisette" }
+icloud-auth = { git = "https://github.com/SideStore/apple-private-apis", package = "icloud-auth" }

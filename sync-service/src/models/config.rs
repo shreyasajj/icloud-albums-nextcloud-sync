@@ -20,7 +20,9 @@ pub struct AppConfig {
     pub nextcloud_username: String,
     pub nextcloud_password: String,
     pub target_folder: String,
-    pub icloud_token: String,
+    pub apple_id: String,
+    pub anisette_url: String,
+    pub device_configured: bool,
 }
 
 impl Default for AppConfig {
@@ -35,7 +37,9 @@ impl Default for AppConfig {
             nextcloud_username: String::new(),
             nextcloud_password: String::new(),
             target_folder: "/iCloud Albums".to_string(),
-            icloud_token: String::new(),
+            apple_id: String::new(),
+            anisette_url: "https://ani.sidestore.io/v3".to_string(),
+            device_configured: false,
         }
     }
 }

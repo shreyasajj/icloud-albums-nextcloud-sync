@@ -76,8 +76,14 @@ impl ConfigRepository {
         if let Some(value) = self.get("target_folder").await? {
             config.target_folder = value;
         }
-        if let Some(value) = self.get("icloud_token").await? {
-            config.icloud_token = value;
+        if let Some(value) = self.get("apple_id").await? {
+            config.apple_id = value;
+        }
+        if let Some(value) = self.get("anisette_url").await? {
+            config.anisette_url = value;
+        }
+        if let Some(value) = self.get("device_configured").await? {
+            config.device_configured = value.parse().unwrap_or(false);
         }
 
         Ok(config)
@@ -94,7 +100,9 @@ impl ConfigRepository {
         self.set("nextcloud_username", &config.nextcloud_username).await?;
         self.set("nextcloud_password", &config.nextcloud_password).await?;
         self.set("target_folder", &config.target_folder).await?;
-        self.set("icloud_token", &config.icloud_token).await?;
+        self.set("apple_id", &config.apple_id).await?;
+        self.set("anisette_url", &config.anisette_url).await?;
+        self.set("device_configured", &config.device_configured.to_string()).await?;
 
         Ok(())
     }
