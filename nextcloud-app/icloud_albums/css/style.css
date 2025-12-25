@@ -1,0 +1,24 @@
+/* Custom styles for iCloud Albums app */
+
+#app {
+    width: 100%;
+    height: 100%;
+}
+
+/* Ensure buttons have proper spacing */
+button {
+    margin: 0 5px;
+}
+
+button:first-child {
+    margin-left: 0;
+}
+
+button:last-child {
+    margin-right: 0;
+}
+
+/* Make sure the app fills the Nextcloud content area */
+#icloud-albums-app {
+    min-height: 100vh;
+}

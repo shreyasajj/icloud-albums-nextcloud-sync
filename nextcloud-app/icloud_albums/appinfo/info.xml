@@ -1,0 +1,46 @@
+<?xml version="1.0"?>
+<info xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:noNamespaceSchemaLocation="https://apps.nextcloud.com/schema/apps/info.xsd">
+    <id>icloud_albums</id>
+    <name>iCloud Albums Sync</name>
+    <summary>Sync iCloud Shared Albums to Nextcloud</summary>
+    <description><![CDATA[
+Automatically sync iCloud Shared Albums to your Nextcloud instance.
+
+Features:
+- Discover and sync iCloud shared albums
+- Automatic sync at configurable intervals
+- Approve/reject album shares
+- Home Assistant notifications for new shares
+- File deduplication using SHA256 hashing
+- Bi-directional sync (iCloud → Nextcloud)
+
+This app requires a separate sync service to be running. See the documentation for setup instructions.
+    ]]></description>
+    <version>0.1.0</version>
+    <licence>MIT</licence>
+    <author mail="your-email@example.com">iCloud Albums Sync Contributors</author>
+    <namespace>ICloudAlbums</namespace>
+    <category>multimedia</category>
+    <category>files</category>
+    <bugs>https://github.com/yourusername/icloud-albums-nextcloud-sync/issues</bugs>
+    <repository>https://github.com/yourusername/icloud-albums-nextcloud-sync</repository>
+    <screenshot>https://raw.githubusercontent.com/yourusername/icloud-albums-nextcloud-sync/main/screenshots/main.png</screenshot>
+
+    <dependencies>
+        <nextcloud min-version="28" max-version="30"/>
+        <php min-version="8.1" max-version="8.3"/>
+    </dependencies>
+
+    <navigations>
+        <navigation>
+            <name>iCloud Albums</name>
+            <route>icloud_albums.page.index</route>
+            <icon>app.svg</icon>
+        </navigation>
+    </navigations>
+
+    <settings>
+        <admin>OCA\ICloudAlbums\Settings\AdminSettings</admin>
+    </settings>
+</info>

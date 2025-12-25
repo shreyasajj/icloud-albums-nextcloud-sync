@@ -1,0 +1,56 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: icloud-sync-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-icloud_sync}
+      POSTGRES_USER: ${POSTGRES_USER:-icloud_sync}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - icloud_sync
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U icloud_sync"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  sync-service:
+    build:
+      context: .
+      dockerfile: sync-service/Dockerfile
+    container_name: icloud-sync-service
+    ports:
+      - "${SYNC_SERVICE_PORT:-8080}:8080"
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8080
+      DATABASE_URL: postgresql://${POSTGRES_USER:-icloud_sync}:${POSTGRES_PASSWORD:-changeme}@postgres:5432/${POSTGRES_DB:-icloud_sync}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      NEXTCLOUD_URL: ${NEXTCLOUD_URL}
+      NEXTCLOUD_USERNAME: ${NEXTCLOUD_USERNAME}
+      NEXTCLOUD_PASSWORD: ${NEXTCLOUD_PASSWORD}
+      HOME_ASSISTANT_URL: ${HOME_ASSISTANT_URL:-}
+      HOME_ASSISTANT_TOKEN: ${HOME_ASSISTANT_TOKEN:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - icloud_sync
+    volumes:
+      - ./config:/app/config
+      - sync_cache:/app/cache
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    driver: local
+  sync_cache:
+    driver: local
+
+networks:
+  icloud_sync:
+    driver: bridge

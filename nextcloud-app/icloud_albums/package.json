@@ -1,0 +1,40 @@
+{
+  "name": "icloud_albums",
+  "version": "0.1.0",
+  "description": "iCloud Albums Sync for Nextcloud",
+  "main": "src/main.js",
+  "scripts": {
+    "build": "webpack --mode production",
+    "dev": "webpack --mode development",
+    "watch": "webpack --mode development --watch"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yourusername/icloud-albums-nextcloud-sync"
+  },
+  "keywords": [
+    "nextcloud",
+    "icloud",
+    "albums",
+    "sync"
+  ],
+  "author": "iCloud Albums Sync Contributors",
+  "license": "MIT",
+  "dependencies": {
+    "@nextcloud/axios": "^2.4.0",
+    "@nextcloud/dialogs": "^5.0.0",
+    "@nextcloud/router": "^3.0.0",
+    "@nextcloud/vue": "^8.0.0",
+    "vue": "^2.7.14"
+  },
+  "devDependencies": {
+    "@nextcloud/babel-config": "^1.0.0",
+    "@nextcloud/browserslist-config": "^3.0.0",
+    "@nextcloud/webpack-vue-config": "^6.0.0",
+    "webpack": "^5.88.0",
+    "webpack-cli": "^5.1.4"
+  },
+  "browserslist": [
+    "extends @nextcloud/browserslist-config"
+  ]
+}

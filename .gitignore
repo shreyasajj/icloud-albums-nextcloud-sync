@@ -1,0 +1,44 @@
+# Rust
+/target/
+**/*.rs.bk
+Cargo.lock
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Config
+/config/*.json
+/config/*.yaml
+/config/*.yml
+
+# Cache
+/cache/
+
+# Logs
+*.log
+
+# Database
+*.db
+*.sqlite
+
+# Docker
+docker-compose.override.yml
+
+# Nextcloud app
+nextcloud-app/node_modules/
+nextcloud-app/build/
+nextcloud-app/vendor/
+nextcloud-app/.phpunit.result.cache

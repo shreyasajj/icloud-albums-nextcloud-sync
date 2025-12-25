@@ -1,0 +1,44 @@
+[package]
+name = "sync-service"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+# Workspace dependencies
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+axum = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sqlx = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+chrono = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+aes-gcm = { workspace = true }
+config = { workspace = true }
+dotenvy = { workspace = true }
+uuid = { workspace = true }
+icloud-album-rs = { workspace = true }
+
+# Additional dependencies
+futures = "0.3"
+async-trait = "0.1"
+bytes = "1.9"
+mime_guess = "2.0"
+base64 = "0.22"
+
+# rustpush - will be added as git submodule
+# For now, we'll use icloud-album-rs as primary implementation
+# rustpush can be integrated later for full iCloud authentication
+
+[dev-dependencies]
+mockito = "1.6"
