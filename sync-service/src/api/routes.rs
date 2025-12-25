@@ -9,11 +9,14 @@ pub fn create_router(state: AppState) -> Router {
     Router::new()
         // Health check
         .route("/health", get(health_check))
+        // Authentication routes
+        .route("/api/auth/login", post(login))
+        .route("/api/auth/status", get(auth_status))
         // Config routes
         .route("/api/config", get(get_config).put(update_config))
         // Album routes
         .route("/api/albums", get(list_albums))
-        .route("/api/albums/discover", post(discover_album))
+        .route("/api/albums/discover-all", post(discover_all_albums))
         .route("/api/albums/:id", get(get_album))
         .route("/api/albums/:id/approve", post(approve_album))
         .route("/api/albums/:id/reject", post(reject_album))

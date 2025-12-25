@@ -1,5 +1,5 @@
 use crate::db::{AlbumRepository, FileRepository, SyncHistoryRepository, ConfigRepository, DbPool};
-use crate::icloud::ICloudClient;
+use crate::icloud::{ICloudClient, AuthManager};
 use crate::nextcloud::NextcloudClient;
 use crate::utils::{calculate_sha256, HomeAssistantClient};
 use crate::models::{
@@ -13,20 +13,25 @@ use tracing::{debug, error, info, instrument, warn};
 
 /// Core sync service that orchestrates syncing between iCloud and Nextcloud
 pub struct SyncService {
-    pool: DbPool,
-    icloud_client: ICloudClient,
+    pub pool: DbPool,
+    pub icloud_client: Arc<tokio::sync::RwLock<ICloudClient>>,
+    pub auth_manager: Arc<AuthManager>,
     config: Arc<tokio::sync::RwLock<AppConfig>>,
 }
 
 impl SyncService {
     /// Create a new sync service
-    pub fn new(pool: DbPool) -> Self {
-        let icloud_client = ICloudClient::new();
+    pub fn new(
+        pool: DbPool,
+        icloud_client: Arc<tokio::sync::RwLock<ICloudClient>>,
+        auth_manager: Arc<AuthManager>,
+    ) -> Self {
         let config = Arc::new(tokio::sync::RwLock::new(AppConfig::default()));
 
         Self {
             pool,
             icloud_client,
+            auth_manager,
             config,
         }
     }
@@ -58,54 +63,90 @@ impl SyncService {
         Ok(())
     }
 
-    /// Discover a new album from iCloud token and add to database as pending
+    /// Authenticate with Apple ID (required before discovering albums)
+    #[instrument(skip(self, password))]
+    pub async fn authenticate(&self, apple_id: &str, password: &str) -> Result<()> {
+        info!("Authenticating with Apple ID: {}", apple_id);
+
+        self.auth_manager.authenticate(apple_id, password).await?;
+
+        // Initialize iCloud client after authentication
+        let mut client = self.icloud_client.write().await;
+        client.initialize().await?;
+
+        info!("Authentication successful");
+
+        Ok(())
+    }
+
+    /// Check if authenticated
+    pub async fn is_authenticated(&self) -> bool {
+        self.auth_manager.is_authenticated().await
+    }
+
+    /// Discover ALL shared albums automatically (no tokens needed!)
     #[instrument(skip(self))]
-    pub async fn discover_album(&self, token: &str) -> Result<Album> {
-        info!("Discovering album from token");
+    pub async fn discover_all_albums(&self) -> Result<Vec<Album>> {
+        info!("Discovering all shared albums from iCloud");
 
-        // Fetch album from iCloud
-        let icloud_album = self
-            .icloud_client
-            .fetch_album(token)
+        // Ensure we're authenticated
+        if !self.is_authenticated().await {
+            anyhow::bail!("Not authenticated. Please login with Apple ID first.");
+        }
+
+        let client = self.icloud_client.read().await;
+        let icloud_albums = client
+            .discover_all_albums()
             .await
-            .context("Failed to fetch album from iCloud")?;
+            .context("Failed to discover albums from iCloud")?;
 
-        // Save to database as pending
         let album_repo = AlbumRepository::new(self.pool.clone());
+        let mut discovered_albums = Vec::new();
 
-        // Check if album already exists
-        if let Some(existing) = album_repo.get_by_album_id(&icloud_album.token).await? {
-            info!("Album already exists: {}", existing.name);
-            return Ok(existing);
-        }
-
-        let create_album = CreateAlbum {
-            album_id: icloud_album.token.clone(),
-            name: icloud_album.name.clone(),
-            owner: icloud_album.owner.clone(),
-        };
-
-        let album = album_repo.create(create_album).await?;
-
-        info!("Discovered new album: {} ({})", album.name, album.id);
-
-        // Send notification to Home Assistant if enabled
-        let config = self.get_config().await;
-        if config.home_assistant_enabled && !config.home_assistant_url.is_empty() {
-            let ha_client = HomeAssistantClient::new(
-                config.home_assistant_url,
-                config.home_assistant_token,
-            );
-
-            if let Err(e) = ha_client
-                .notify_new_album(&album.name, album.owner.as_deref().unwrap_or("Unknown"))
-                .await
-            {
-                warn!("Failed to send Home Assistant notification: {}", e);
+        for icloud_album in icloud_albums {
+            // Check if album already exists
+            if let Some(existing) = album_repo.get_by_album_id(&icloud_album.guid).await? {
+                info!("Album already exists: {}", existing.name);
+                discovered_albums.push(existing);
+                continue;
             }
+
+            // Create new album as pending
+            let create_album = CreateAlbum {
+                album_id: icloud_album.guid.clone(),
+                name: icloud_album.name.clone(),
+                owner: icloud_album.owner_name.clone()
+                    .or(icloud_album.owner_email.clone()),
+            };
+
+            let album = album_repo.create(create_album).await?;
+            info!("Discovered new album: {} ({})", album.name, album.id);
+
+            // Send notification to Home Assistant if enabled
+            let config = self.get_config().await;
+            if config.home_assistant_enabled && !config.home_assistant_url.is_empty() {
+                let ha_client = HomeAssistantClient::new(
+                    config.home_assistant_url,
+                    config.home_assistant_token,
+                );
+
+                if let Err(e) = ha_client
+                    .notify_new_album(&album.name, album.owner.as_deref().unwrap_or("Unknown"))
+                    .await
+                {
+                    warn!("Failed to send Home Assistant notification: {}", e);
+                }
+            }
+
+            discovered_albums.push(album);
         }
 
-        Ok(album)
+        info!("Discovered {} total albums ({} new)",
+            discovered_albums.len(),
+            discovered_albums.iter().filter(|a| a.status == AlbumStatus::Pending).count()
+        );
+
+        Ok(discovered_albums)
     }
 
     /// Approve an album for syncing
@@ -277,12 +318,12 @@ impl SyncService {
         let mut files_removed = 0;
         let files_updated = 0;
 
-        // Fetch current album state from iCloud
-        let icloud_album = self
-            .icloud_client
-            .fetch_album(&album.album_id)
+        // Fetch current album photos from iCloud using rustpush
+        let client = self.icloud_client.read().await;
+        let icloud_photos = client
+            .get_album_photos(&album.album_id)
             .await
-            .context("Failed to fetch album from iCloud")?;
+            .context("Failed to fetch album photos from iCloud")?;
 
         // Create Nextcloud client
         let nextcloud_client = NextcloudClient::new(
@@ -321,13 +362,16 @@ impl SyncService {
 
         // Process photos from iCloud
         let max_concurrent = config.max_concurrent_downloads;
-        let photos_stream = futures::stream::iter(icloud_album.photos.into_iter())
+        let album_guid = album.album_id.clone();
+
+        let photos_stream = futures::stream::iter(icloud_photos.into_iter())
             .map(|photo| {
-                let icloud_client = self.icloud_client.clone();
+                let client_clone = self.icloud_client.clone();
                 let nextcloud_client = nextcloud_client.clone();
                 let folder_path = folder_path.clone();
                 let file_repo = file_repo.clone();
                 let album_id = album.id;
+                let album_guid = album_guid.clone();
 
                 async move {
                     // Check if photo already exists in database
@@ -336,12 +380,14 @@ impl SyncService {
                         return Ok::<bool, anyhow::Error>(false);
                     }
 
-                    // Download photo from iCloud
+                    // Download photo from iCloud using rustpush MMCS protocol
                     debug!("Downloading photo: {}", photo.filename);
-                    let content = icloud_client
-                        .download_photo(&photo.url)
+                    let client = client_clone.read().await;
+                    let content = client
+                        .download_photo(&album_guid, &photo.guid)
                         .await
                         .context("Failed to download photo")?;
+                    drop(client); // Release lock
 
                     // Calculate hash
                     let hash = calculate_sha256(&content);
@@ -369,7 +415,7 @@ impl SyncService {
                             file_hash: hash,
                             file_size: Some(photo.file_size as i64),
                             icloud_guid: Some(photo.guid.clone()),
-                            icloud_url: Some(photo.url.clone()),
+                            icloud_url: None, // rustpush uses MMCS, no direct URLs
                         })
                         .await?;
 
@@ -408,11 +454,14 @@ impl SyncService {
         }
 
         // Remove photos that are no longer in iCloud
-        let icloud_guids: Vec<String> = icloud_album
-            .photos
+        // Re-fetch to get current GUIDs
+        let client = self.icloud_client.read().await;
+        let current_photos = client.get_album_photos(&album.album_id).await?;
+        let icloud_guids: Vec<String> = current_photos
             .iter()
             .map(|p| p.guid.clone())
             .collect();
+        drop(client);
 
         // Find files to remove
         for db_file in &db_files {

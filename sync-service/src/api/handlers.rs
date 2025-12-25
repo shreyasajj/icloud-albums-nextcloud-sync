@@ -67,16 +67,43 @@ pub async fn get_album(
     }
 }
 
+// Authentication endpoints
 #[derive(Debug, Serialize, Deserialize)]
-pub struct DiscoverAlbumRequest {
-    pub token: String,
+pub struct LoginRequest {
+    pub apple_id: String,
+    pub password: String,
 }
 
-pub async fn discover_album(
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AuthStatus {
+    pub authenticated: bool,
+}
+
+pub async fn login(
     State(state): State<AppState>,
-    Json(payload): Json<DiscoverAlbumRequest>,
+    Json(payload): Json<LoginRequest>,
 ) -> Response {
-    let result = state.sync_service.discover_album(&payload.token).await;
+    let result = state.sync_service.authenticate(&payload.apple_id, &payload.password).await;
+
+    match result {
+        Ok(_) => (
+            StatusCode::OK,
+            Json(ApiResponse::success("Authentication successful")),
+        )
+            .into_response(),
+        Err(e) => result_to_response(Err::<(), _>(e)),
+    }
+}
+
+pub async fn auth_status(State(state): State<AppState>) -> Response {
+    let authenticated = state.sync_service.is_authenticated().await;
+    let status = AuthStatus { authenticated };
+    (StatusCode::OK, Json(ApiResponse::success(status))).into_response()
+}
+
+// Album discovery - automatic discovery of ALL albums
+pub async fn discover_all_albums(State(state): State<AppState>) -> Response {
+    let result = state.sync_service.discover_all_albums().await;
     result_to_response(result)
 }
 

@@ -35,6 +35,8 @@ services:
       NEXTCLOUD_PASSWORD: ${NEXTCLOUD_PASSWORD}
       HOME_ASSISTANT_URL: ${HOME_ASSISTANT_URL:-}
       HOME_ASSISTANT_TOKEN: ${HOME_ASSISTANT_TOKEN:-}
+      ENCRYPTION_SECRET: ${ENCRYPTION_SECRET:-CHANGE_ME_IN_PRODUCTION}
+      ANISETTE_URL: ${ANISETTE_URL:-https://ani.sidestore.io/v3}
     depends_on:
       postgres:
         condition: service_healthy
